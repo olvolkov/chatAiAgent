@@ -1,0 +1,12 @@
+{
+  "routerapi_base_url": "https://routerai.ru/api/v1",
+  "routerapi_api_key": "",
+  "models": [
+    "qwen/qwen3.6-flash",
+    "x-ai/grok-4.3"
+  ],
+  "active_model": "qwen/qwen3.6-flash",
+  "tavily_api_key": "",
+  "tavily_max_results": 5,
+  "memory_limit": 10
+}
