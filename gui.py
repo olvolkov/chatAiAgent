@@ -873,8 +873,8 @@ class AIChatGUI:
         file_list_frame.grid_columnconfigure(0, weight=1)
         
         # File list label
-        ttk.Label(file_list_frame, text="Attached Files:", font=('Segoe UI', 9)).grid(
-            row=0, column=0, sticky=tk.W, padx=(0, 5))
+        self.file_list_label = ttk.Label(file_list_frame, text="Attached Files:", font=('Segoe UI', 9))
+        self.file_list_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
         
         # File list display (read-only)
         self.file_list_display = tk.Text(
@@ -890,13 +890,13 @@ class AIChatGUI:
         self.file_list_display.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
         
         # File list scrollbar
-        file_scrollbar = ttk.Scrollbar(
+        self.file_list_scrollbar = ttk.Scrollbar(
             file_list_frame,
             orient="vertical",
             command=self.file_list_display.yview
         )
-        file_scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
-        self.file_list_display.configure(yscrollcommand=file_scrollbar.set)
+        self.file_list_scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
+        self.file_list_display.configure(yscrollcommand=self.file_list_scrollbar.set)
         
         # File buttons frame
         file_button_frame = ttk.Frame(file_list_frame)
@@ -1159,18 +1159,24 @@ class AIChatGUI:
         """Update the file list display widget."""
         logger.debug(f"AIChatGUI: Updating file list display with {len(self.selected_files)} files")
         
-        self.file_list_display.config(state='normal')
-        self.file_list_display.delete(1.0, tk.END)
-        
         if not self.selected_files:
-            self.file_list_display.insert(tk.END, "No files attached")
+            # Hide file list widgets when no files attached
+            self.file_list_label.grid_remove()
+            self.file_list_display.grid_remove()
+            self.file_list_scrollbar.grid_remove()
         else:
+            # Show file list widgets when files are attached
+            self.file_list_label.grid()
+            self.file_list_display.grid()
+            self.file_list_scrollbar.grid()
+            
+            self.file_list_display.config(state='normal')
+            self.file_list_display.delete(1.0, tk.END)
             for i, file_path in enumerate(self.selected_files, 1):
                 file_name = os.path.basename(file_path)
                 self.file_list_display.insert(tk.END, f"{i}. {file_name}\n")
-        
-        self.file_list_display.config(state='disabled')
-        self.file_list_display.see(tk.END)
+            self.file_list_display.config(state='disabled')
+            self.file_list_display.see(tk.END)
     
     def _open_settings(self):
         """Open settings dialog to edit configuration."""
