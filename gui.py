@@ -661,6 +661,9 @@ class AIChatGUI:
         # Setup UI
         self._setup_ui()
         
+        # Hide file list widgets on startup (no files attached yet)
+        self._update_file_list_display()
+        
         # Start with a welcome message
         self._add_system_message("Welcome to AI Agent Chat!")
         if self.agent is None:
