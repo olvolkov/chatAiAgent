@@ -4,7 +4,8 @@ AI Agent based on LangGraph with RouterAPI (OpenAI Compatible), Tavily search, a
 
 import os
 import logging
-from typing import TypedDict, Annotated, Sequence
+import base64
+from typing import TypedDict, Annotated, Sequence, Optional, List, Union
 from operator import add
 
 from langgraph.graph import StateGraph, END
@@ -336,12 +337,94 @@ class AIAgent:
         logger.debug(f"_trim_memory: Result has {len(remaining_messages)} messages")
         return remaining_messages
     
-    def run(self, query: str) -> str:
+    def _encode_file_to_base64(self, file_path: str) -> tuple:
         """
-        Run the agent with a query.
+        Encode a file to base64 with MIME type.
+        
+        Args:
+            file_path: Path to the file
+            
+        Returns:
+            Tuple of (base64_string, mime_type)
+        """
+        import mimetypes
+        
+        logger.debug(f"_encode_file_to_base64: Processing file: {file_path}")
+        
+        # Check if file exists
+        if not os.path.exists(file_path):
+            logger.error(f"_encode_file_to_base64: File not found: {file_path}")
+            raise FileNotFoundError(f"File not found: {file_path}")
+        
+        # Guess MIME type
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if mime_type is None:
+            # Default to binary for unknown types
+            mime_type = "application/octet-stream"
+        
+        # Read and encode file
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+            base64_data = base64.b64encode(file_data).decode("utf-8")
+        
+        logger.debug(f"_encode_file_to_base64: File encoded, MIME type: {mime_type}, size: {len(file_data)} bytes")
+        return base64_data, mime_type
+    
+    def _create_message_with_files(self, text: str, file_paths: Optional[List[str]] = None) -> HumanMessage:
+        """
+        Create a HumanMessage with text and optional file attachments.
+        
+        Args:
+            text: The text content
+            file_paths: Optional list of file paths to attach
+            
+        Returns:
+            HumanMessage with text and images/files
+        """
+        if not file_paths:
+            return HumanMessage(content=text)
+        
+        # Build content parts for multimodal message
+        content_parts = [{"type": "text", "text": text}]
+        
+        for file_path in file_paths:
+            try:
+                base64_data, mime_type = self._encode_file_to_base64(file_path)
+                
+                if mime_type.startswith("image/"):
+                    # Add image as base64
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{base64_data}"
+                        }
+                    })
+                    logger.debug(f"_create_message_with_files: Added image: {file_path}")
+                else:
+                    # For non-image files, add as text with file info
+                    file_name = os.path.basename(file_path)
+                    content_parts.append({
+                        "type": "text",
+                        "text": f"\n\n[File: {file_name}]\n(Base64 encoded file attached - MIME type: {mime_type})"
+                    })
+                    logger.debug(f"_create_message_with_files: Added file reference: {file_path}")
+            except Exception as e:
+                logger.error(f"_create_message_with_files: Error processing file {file_path}: {e}")
+                # Add error message for this file
+                content_parts.append({
+                    "type": "text",
+                    "text": f"\n\n[Error: Could not process file '{file_path}': {str(e)}]"
+                })
+        
+        return HumanMessage(content=content_parts)
+    
+    def run(self, query: str, file_paths: Optional[List[str]] = None) -> str:
+        """
+        Run the agent with a query and optional file attachments.
         
         Args:
             query: The user's query
+            file_paths: Optional list of file paths to attach (images, documents, etc.)
             
         Returns:
             The agent's response
@@ -349,6 +432,8 @@ class AIAgent:
         import time
         
         logger.debug(f"run: Starting with query: '{query[:50]}...' (length: {len(query)})")
+        if file_paths:
+            logger.debug(f"run: Attached files: {file_paths}")
         
         # Initialize conversation history if not exists
         if not hasattr(self, '_conversation_history'):
@@ -363,8 +448,8 @@ class AIAgent:
                 SystemMessage(content="You are a helpful AI assistant. You can use search to find up-to-date information.")
             )
         
-        # Add user query
-        initial_messages.append(HumanMessage(content=query))
+        # Add user query with optional files
+        initial_messages.append(self._create_message_with_files(query, file_paths))
         
         initial_state = {
             "messages": initial_messages,
@@ -403,22 +488,25 @@ class AIAgent:
         logger.debug("run: Returning final response")
         return final_message.content
     
-    def run_stream(self, query: str):
+    def run_stream(self, query: str, file_paths: Optional[List[str]] = None):
         """
         Run the agent with a query and stream the results.
         
         Args:
             query: The user's query
+            file_paths: Optional list of file paths to attach (images, documents, etc.)
             
         Yields:
             The agent's responses as they come in
         """
         logger.debug(f"run_stream: Starting with query: '{query[:50]}...' (length: {len(query)})")
+        if file_paths:
+            logger.debug(f"run_stream: Attached files: {file_paths}")
         
         initial_state = {
             "messages": [
                 SystemMessage(content="You are a helpful AI assistant. You can use search to find up-to-date information."),
-                HumanMessage(content=query)
+                self._create_message_with_files(query, file_paths)
             ],
             "is_final": False
         }
@@ -494,24 +582,60 @@ def main():
     logger.debug("main: Agent initialized successfully")
     
     print("AI Agent initialized successfully!")
-    print("Type 'quit' or 'exit' to stop.\n")
+    print("Type 'quit' or 'exit' to stop.")
+    print("To attach a file, type 'file:' followed by the file path (e.g., 'file: ./image.png')")
+    print("For multiple files, separate paths with commas (e.g., 'file: ./img1.png, ./img2.jpg')")
+    print()
     
     # Chat loop
     while True:
-        user_query = input("You: ").strip()
+        user_input = input("You: ").strip()
         
-        if user_query.lower() in ["quit", "exit"]:
+        if user_input.lower() in ["quit", "exit"]:
             print("Goodbye!")
             logger.info("main: User exited the chat")
             break
         
-        if not user_query:
+        if not user_input:
+            continue
+        
+        # Parse file attachments
+        file_paths = None
+        query = user_input
+        
+        if user_input.lower().startswith("file:"):
+            # Extract file paths and query
+            rest = user_input[5:].strip()
+            if "," in rest:
+                # First part might be files, rest is query
+                parts = rest.split(",", 1)
+                if len(parts) == 2:
+                    file_paths = [f.strip() for f in parts[0].split(",")]
+                    query = parts[1].strip()
+                else:
+                    # All are files, no query
+                    file_paths = [f.strip() for f in rest.split(",")]
+                    query = ""
+            else:
+                # Single file or just query after "file:"
+                if os.path.exists(rest):
+                    file_paths = [rest]
+                    query = ""
+                else:
+                    query = rest
+        
+        if not query and not file_paths:
+            print("Please provide a query or file path.")
             continue
         
         print("\nAgent: ", end="", flush=True)
         
         # Get response
-        response = agent.run(user_query)
+        if file_paths:
+            logger.info(f"main: Processing request with files: {file_paths}")
+            response = agent.run(query, file_paths=file_paths)
+        else:
+            response = agent.run(query)
         print(response)
         print()  # Empty line for readability
 

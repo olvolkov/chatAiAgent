@@ -76,6 +76,7 @@ The console agent runs in an interactive chat loop where you can:
 - The agent will automatically use web search when needed
 - The agent will use math tools for calculations
 - Type `exit` or `quit` to end the session
+- Qery with file type like: `file: ./image.png, What's in this image?`  
 
 ### Running the GUI Chat Agent
 
