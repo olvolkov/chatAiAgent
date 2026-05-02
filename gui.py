@@ -11,8 +11,8 @@ import re
 import threading
 import tkinter as tk
 import webbrowser
-from tkinter import ttk, scrolledtext, messagebox
-from typing import Optional, Dict, Any
+from tkinter import ttk, scrolledtext, messagebox, filedialog
+from typing import Optional, Dict, Any, List
 
 from dotenv import load_dotenv
 
@@ -651,6 +651,9 @@ class AIChatGUI:
         # Chat history
         self.chat_history: list[ChatMessage] = []
         
+        # Selected files for upload
+        self.selected_files: List[str] = []
+        
         # Model switcher variable
         self._model_switcher_var = tk.StringVar()
         self._model_switcher_var.trace('w', self._on_model_changed)
@@ -864,9 +867,61 @@ class AIChatGUI:
         self.input_text.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
         self.input_text.bind('<Return>', lambda e: self._on_enter_pressed(e))
         
-        # Create model switcher frame (above buttons, below input)
+        # Create file list frame (below input, above model switcher)
+        file_list_frame = ttk.Frame(input_frame)
+        file_list_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
+        file_list_frame.grid_columnconfigure(0, weight=1)
+        
+        # File list label
+        ttk.Label(file_list_frame, text="Attached Files:", font=('Segoe UI', 9)).grid(
+            row=0, column=0, sticky=tk.W, padx=(0, 5))
+        
+        # File list display (read-only)
+        self.file_list_display = tk.Text(
+            file_list_frame,
+            height=3,
+            wrap=tk.WORD,
+            font=('Segoe UI', 9),
+            state='disabled',
+            background='#f5f5f5',
+            relief='sunken',
+            borderwidth=1
+        )
+        self.file_list_display.grid(row=1, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
+        
+        # File list scrollbar
+        file_scrollbar = ttk.Scrollbar(
+            file_list_frame,
+            orient="vertical",
+            command=self.file_list_display.yview
+        )
+        file_scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
+        self.file_list_display.configure(yscrollcommand=file_scrollbar.set)
+        
+        # File buttons frame
+        file_button_frame = ttk.Frame(file_list_frame)
+        file_button_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
+        file_button_frame.grid_columnconfigure(0, weight=1)
+        
+        # Add file button
+        self.add_file_button = ttk.Button(
+            file_button_frame,
+            text="+ Add File",
+            command=self._add_file
+        )
+        self.add_file_button.pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Clear files button
+        self.clear_files_button = ttk.Button(
+            file_button_frame,
+            text="Clear Files",
+            command=self._clear_files
+        )
+        self.clear_files_button.pack(side=tk.LEFT)
+        
+        # Create model switcher frame (below file area)
         model_frame = ttk.Frame(input_frame)
-        model_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
+        model_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
         model_frame.grid_columnconfigure(1, weight=1)
         
         # Model label
@@ -887,7 +942,7 @@ class AIChatGUI:
         
         # Create button frame (below model switcher)
         button_frame = ttk.Frame(input_frame)
-        button_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
+        button_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
         
         # Send button
         self.send_button = ttk.Button(
@@ -934,27 +989,33 @@ class AIChatGUI:
         user_input = self.input_text.get(1.0, tk.END).strip()
         logger.debug(f"AIChatGUI: User sent message (length: {len(user_input)} chars)")
         
-        if not user_input:
-            logger.debug("AIChatGUI: Empty message, ignoring")
+        if not user_input and not self.selected_files:
+            logger.debug("AIChatGUI: Empty message and no files, ignoring")
             return
+        
+        # Copy file paths BEFORE clearing input (since _clear_input clears selected_files)
+        file_paths_to_process = self.selected_files.copy()
         
         # Display user message
         self._add_user_message(user_input)
         
-        # Clear input
+        # Clear input (this will clear selected_files)
         self._clear_input()
         
-        # Process in background thread
+        # Process in background thread with copied file paths
         logger.debug("AIChatGUI: Starting background thread to process query")
         threading.Thread(
             target=self._process_user_query,
             args=(user_input,),
+            kwargs={'file_paths': file_paths_to_process},
             daemon=True
         ).start()
     
-    def _process_user_query(self, query: str):
+    def _process_user_query(self, query: str, file_paths: Optional[List[str]] = None):
         """Process user query in background thread."""
         logger.debug(f"AIChatGUI: Processing user query: {query[:50]}...")
+        if file_paths:
+            logger.debug(f"AIChatGUI: Attached files: {file_paths}")
         self.status_var.set("Processing...")
         
         try:
@@ -964,7 +1025,7 @@ class AIChatGUI:
             
             # Get response from agent
             logger.debug("AIChatGUI: Calling agent.run()")
-            response = self.agent.run(query)
+            response = self.agent.run(query, file_paths=file_paths)
             logger.debug(f"AIChatGUI: Received response from agent (length: {len(response)} chars)")
             
             # Display agent response
@@ -1062,8 +1123,54 @@ class AIChatGUI:
         self._add_system_message("Chat cleared")
     
     def _clear_input(self):
-        """Clear the input text."""
+        """Clear the input text and attached files."""
         self.input_text.delete(1.0, tk.END)
+        self.selected_files.clear()
+        self._update_file_list_display()
+    
+    def _add_file(self):
+        """Add a file to the attachment list."""
+        logger.debug("AIChatGUI: Opening file dialog")
+        file_paths = filedialog.askopenfilenames(
+            title="Select files to attach",
+            filetypes=[
+                ("All supported files", "*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.tiff;*.pdf;*.txt;*.md;*.json;*.csv"),
+                ("Images", "*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.tiff"),
+                ("Documents", "*.pdf;*.txt;*.md"),
+                ("Data files", "*.json;*.csv"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if file_paths:
+            logger.debug(f"AIChatGUI: Selected {len(file_paths)} files")
+            for file_path in file_paths:
+                if file_path not in self.selected_files:
+                    self.selected_files.append(file_path)
+            self._update_file_list_display()
+    
+    def _clear_files(self):
+        """Clear all attached files."""
+        logger.debug("AIChatGUI: Clearing attached files")
+        self.selected_files.clear()
+        self._update_file_list_display()
+    
+    def _update_file_list_display(self):
+        """Update the file list display widget."""
+        logger.debug(f"AIChatGUI: Updating file list display with {len(self.selected_files)} files")
+        
+        self.file_list_display.config(state='normal')
+        self.file_list_display.delete(1.0, tk.END)
+        
+        if not self.selected_files:
+            self.file_list_display.insert(tk.END, "No files attached")
+        else:
+            for i, file_path in enumerate(self.selected_files, 1):
+                file_name = os.path.basename(file_path)
+                self.file_list_display.insert(tk.END, f"{i}. {file_name}\n")
+        
+        self.file_list_display.config(state='disabled')
+        self.file_list_display.see(tk.END)
     
     def _open_settings(self):
         """Open settings dialog to edit configuration."""
